@@ -27,9 +27,7 @@ class TripProvider with ChangeNotifier {
       _trips = data.map((json) => Trip.fromJson(json)).toList();
       
       // Cache trips locally
-      for (var trip in _trips) {
-        await dbHelper.saveTrip(trip);
-      }
+      await dbHelper.saveTrips(_trips);
     } catch (e) {
       try {
         // Try to load from local DB if API fails

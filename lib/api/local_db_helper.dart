@@ -54,6 +54,26 @@ class LocalDatabaseHelper {
     );
   }
 
+  Future<void> saveTrips(List<Trip> trips) async {
+    final db = await instance.database;
+    final batch = db.batch();
+    
+    for (var trip in trips) {
+      batch.insert(
+        'trips',
+        {
+          'id': trip.id,
+          'name': trip.name,
+          'user_id': trip.userId,
+          'data': jsonEncode(trip.toJson()),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+    
+    await batch.commit(noResult: true);
+  }
+
 
 
   Future<List<Trip>> getAllTrips() async {
