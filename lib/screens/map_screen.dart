@@ -243,16 +243,16 @@ class _MapScreenState extends State<MapScreen> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    DateFormat('dd MMMM yyyy').format(_selectedDay!.date),
+                    DateFormat('dd MMMM yyyy').format(selectedDay!.date),
                     style: const TextStyle(
                         fontSize: 18, fontWeight: FontWeight.bold),
                   ),
-                  if (_selectedDay!.color != null)
+                  if (selectedDay!.color != null)
                     Container(
                       width: 12,
                       height: 12,
                       decoration: BoxDecoration(
-                        color: Color(int.parse(_selectedDay!.color!
+                        color: Color(int.parse(selectedDay!.color!
                             .replaceFirst('#', '0xff'))),
                         shape: BoxShape.circle,
                       ),
@@ -261,7 +261,7 @@ class _MapScreenState extends State<MapScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                _selectedDay!.comment ?? 'Нет комментария к этому дню',
+                selectedDay!.comment ?? 'Нет комментария к этому дню',
                 style: TextStyle(color: Colors.grey[700]),
               ),
               const SizedBox(height: 12),
@@ -270,7 +270,7 @@ class _MapScreenState extends State<MapScreen> {
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
               ),
               const SizedBox(height: 4),
-              ..._selectedDay!.waypoints.map((wp) =>
+              ...selectedDay!.waypoints.map((wp) =>
                   Padding(
                     padding: const EdgeInsets.only(bottom: 4),
                     child: Row(
