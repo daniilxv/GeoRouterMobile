@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
 import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
 import '../api/trip_provider.dart';
 import '../models/trip_models.dart';
@@ -94,9 +95,22 @@ class _MapScreenState extends State<MapScreen> {
           ? Color(int.parse(day.color!.replaceFirst('#', '0xff')))
           : Colors.blue;
 
-      final points = day.waypoints
-          .map((wp) => LatLng(wp.lat, wp.lon))
-          .toList();
+      List<LatLng> points = [];
+      if (day.geometry != null && day.geometry!.isNotEmpty) {
+        try {
+          final geometryData = jsonDecode(day.geometry!);
+          final coordinates = geometryData['coordinates'] as List;
+          points = coordinates.map((coord) {
+            final c = coord as List;
+            return LatLng(c[1] as double, c[0] as double);
+          }).toList();
+        } catch (e) {
+          debugPrint('Error parsing geometry: $e');
+          points = day.waypoints.map((wp) => LatLng(wp.lat, wp.lon)).toList();
+        }
+      } else {
+        points = day.waypoints.map((wp) => LatLng(wp.lat, wp.lon)).toList();
+      }
 
       if (points.length >= 2) {
         polylines.add(

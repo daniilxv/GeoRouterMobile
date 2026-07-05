@@ -43,6 +43,7 @@ class Day {
   final DateTime date;
   final String? color;
   final String? comment;
+  final String? geometry;
   final List<Waypoint> waypoints;
 
   Day({
@@ -51,6 +52,7 @@ class Day {
     required this.date,
     this.color,
     this.comment,
+    this.geometry,
     required this.waypoints,
   });
 
@@ -61,6 +63,7 @@ class Day {
       date: DateTime.parse(json['date']),
       color: json['color'],
       comment: json['comment'],
+      geometry: json['geometry'],
       waypoints: (json['waypoints'] as List)
           .map((wpJson) => Waypoint.fromJson(wpJson))
           .toList(),
@@ -74,6 +77,7 @@ class Day {
       'date': date.toIso8601String().split('T')[0],
       'color': color,
       'comment': comment,
+      'geometry': geometry,
     };
   }
 }
