@@ -68,11 +68,12 @@ class _TripListScreenState extends State<TripListScreen> {
       ),
       body: Consumer<TripProvider>(
         builder: (context, tripProvider, child) {
-          if (tripProvider.isLoading) {
+          // Only show full-screen loader if we have no trips and are loading
+          if (tripProvider.isLoading && tripProvider.trips.isEmpty) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          if (tripProvider.error != null) {
+          if (tripProvider.error != null && tripProvider.trips.isEmpty) {
             return Center(child: Text(tripProvider.error!));
           }
 

@@ -31,17 +31,41 @@ class _MapScreenState extends State<MapScreen> {
 
   Future<void> _loadTrip() async {
     final tripProvider = Provider.of<TripProvider>(context, listen: false);
-    final trip = await tripProvider.fetchTripDetails(widget.tripId);
-    setState(() {
-      _trip = trip;
-      if (_trip != null && _trip!.days.isNotEmpty) {
-        _selectedDayNotifier.value = _trip!.days.first;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _zoomToTrip();
-        });
-      }
-      _isLoading = false;
-    });
+    
+    // 1. Try to load from cache first for instant display
+    final cachedTrip = await tripProvider.dbHelper.getTrip(widget.tripId);
+    if (cachedTrip != null) {
+      setState(() {
+        _trip = cachedTrip;
+        if (_trip!.days.isNotEmpty) {
+          _selectedDayNotifier.value = _trip!.days.first;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _zoomToTrip();
+          });
+        }
+        _isLoading = false;
+      });
+    }
+
+    // 2. Fetch fresh data from server in the background
+    try {
+      final trip = await tripProvider.fetchTripDetails(widget.tripId);
+      setState(() {
+        _trip = trip;
+        if (_trip != null && _trip!.days.isNotEmpty) {
+          _selectedDayNotifier.value = _trip!.days.first;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _zoomToTrip();
+          });
+        }
+        _isLoading = false;
+      });
+    } catch (e) {
+      debugPrint('Error updating trip from server: $e');
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   void _zoomToTrip() {

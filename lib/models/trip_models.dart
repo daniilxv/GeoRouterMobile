@@ -33,6 +33,7 @@ class Trip {
       'user': userId,
       'name': name,
       'created_at': createdAt.toIso8601String(),
+      'days': days.map((day) => day.toJson()).toList(),
     };
   }
 }
@@ -78,6 +79,7 @@ class Day {
       'color': color,
       'comment': comment,
       'geometry': geometry,
+      'waypoints': waypoints.map((wp) => wp.toJson()).toList(),
     };
   }
 }
