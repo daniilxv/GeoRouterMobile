@@ -21,7 +21,7 @@ void main() async {
 
   // Initialize FMTC
   await FMTCObjectBoxBackend().initialise();
-  
+
   runApp(
     MultiProvider(
       providers: [
@@ -45,8 +45,36 @@ void main() async {
   );
 }
 
-class GeoRouterApp extends StatelessWidget {
+class GeoRouterApp extends StatefulWidget {
   const GeoRouterApp({super.key});
+
+  @override
+  State<GeoRouterApp> createState() => _GeoRouterAppState();
+}
+
+class _GeoRouterAppState extends State<GeoRouterApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Trigger synchronization when app returns to foreground
+      final auth = Provider.of<AuthProvider>(context, listen: false);
+      if (auth.isAuthenticated) {
+        Provider.of<TripProvider>(context, listen: false).fetchTrips();
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

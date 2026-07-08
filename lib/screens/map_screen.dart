@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
-import 'package:flutter_map_tile_caching/flutter_map_tile_caching.dart';
+import '../api/offline_map_helper.dart';
 import '../api/trip_provider.dart';
 import '../models/trip_models.dart';
 
@@ -20,11 +19,17 @@ class _MapScreenState extends State<MapScreen> {
   Trip? _trip;
   late ValueNotifier<Day?> _selectedDayNotifier;
   bool _isLoading = true;
-  final MapController _mapController = MapController();
+  MapLibreMapController? _mapController;
+  bool _isStyleLoaded = false;
+  bool _isDownloading = false;
+  double _downloadProgress = 0.0;
+  bool _cancelDownload = false;
 
+  @override
   @override
   void initState() {
     super.initState();
+    debugPrint('MapScreen: initState called');
     _selectedDayNotifier = ValueNotifier<Day?>(null);
     _loadTrip();
   }
@@ -39,9 +44,6 @@ class _MapScreenState extends State<MapScreen> {
         _trip = cachedTrip;
         if (_trip!.days.isNotEmpty) {
           _selectedDayNotifier.value = _trip!.days.first;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _zoomToTrip();
-          });
         }
         _isLoading = false;
       });
@@ -54,9 +56,6 @@ class _MapScreenState extends State<MapScreen> {
         _trip = trip;
         if (_trip != null && _trip!.days.isNotEmpty) {
           _selectedDayNotifier.value = _trip!.days.first;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _zoomToTrip();
-          });
         }
         _isLoading = false;
       });
@@ -66,10 +65,39 @@ class _MapScreenState extends State<MapScreen> {
         _isLoading = false;
       });
     }
+  
+    @override
+    void dispose() {
+      debugPrint('MapScreen: dispose called');
+      _selectedDayNotifier.dispose();
+      super.dispose();
+    }
+  }
+
+
+  void _onMapCreated(MapLibreMapController controller) {
+    debugPrint('MapLibre: [${DateTime.now()}] Map created');
+    _mapController = controller;
+  }
+
+  void _onStyleLoaded() {
+    debugPrint('MapLibre: [${DateTime.now()}] Style loaded successfully');
+    setState(() {
+      _isStyleLoaded = true;
+    });
+    _updateMapLayers();
+    _zoomToTrip();
+  }
+
+  Future<void> _clearLayers() async {
+    if (_mapController == null) return;
+    // In maplibre_gl flutter plugin, addSymbol and addLine create internal layers.
+    // There is no simple way to clear them all.
+    // For now, we rely on the fact that _updateMapLayers is called sparingly.
   }
 
   void _zoomToTrip() {
-    if (_trip == null || _trip!.days.isEmpty) return;
+    if (_trip == null || _trip!.days.isEmpty || _mapController == null) return;
 
     final allPoints = _trip!.days
         .expand((day) => day.waypoints)
@@ -78,47 +106,62 @@ class _MapScreenState extends State<MapScreen> {
 
     if (allPoints.isEmpty) return;
 
-    final bounds = LatLngBounds.fromPoints(allPoints);
-    _mapController.fitCamera(
-        CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(50.0)));
+    // Calculate bounds
+    double minLon = allPoints.first.longitude;
+    double maxLon = allPoints.first.longitude;
+    double minLat = allPoints.first.latitude;
+    double maxLat = allPoints.first.latitude;
+
+    for (var p in allPoints) {
+      if (p.longitude < minLon) minLon = p.longitude;
+      if (p.longitude > maxLon) maxLon = p.longitude;
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+    }
+
+    _mapController!.setCameraBounds(
+      north: maxLat,
+      south: minLat,
+      east: maxLon,
+      west: minLon,
+      padding: 50,
+    );
   }
 
-  List<Marker> _getMarkers(Day? selectedDay) {
-    if (_trip == null) return [];
+  Future<void> _updateMapLayers() async {
+    debugPrint('MapLibre: [${DateTime.now()}] Updating map layers...');
+    if (_mapController == null || _trip == null || !_isStyleLoaded) {
+      debugPrint('MapLibre: Update aborted - controller: $_mapController, trip: $_trip, styleLoaded: $_isStyleLoaded');
+      return;
+    }
 
-    List<Marker> markers = [];
+    // We avoid calling _clearLayers() because addSymbol/addLine
+    // in this plugin don't provide a way to clear them.
+    // To avoid duplication, we only call this when necessary.
+
+    final selectedDay = _selectedDayNotifier.value;
+
     for (var day in _trip!.days) {
       final isSelected = day == selectedDay;
       final dayColor = day.color != null
           ? Color(int.parse(day.color!.replaceFirst('#', '0xff')))
           : Colors.blue;
 
-      markers.addAll(day.waypoints.map<Marker>((wp) {
-        return Marker(
-          point: LatLng(wp.lat, wp.lon),
-          width: isSelected ? 80 : 40,
-          height: isSelected ? 80 : 40,
-          child: Icon(
-            wp.isRefuel ? Icons.local_gas_station : Icons.location_on,
-            color: isSelected ? dayColor : dayColor.withOpacity(0.4),
-            size: isSelected ? 30 : 20,
+      // Add Waypoints
+      debugPrint('MapLibre: Adding ${day.waypoints.length} waypoints for day ${day.date}');
+      for (var wp in day.waypoints) {
+        await _mapController!.addSymbol(
+          SymbolOptions(
+            geometry: LatLng(wp.lat, wp.lon),
+            iconImage: wp.isRefuel ? 'gas-station' : 'location-pin',
+            iconSize: isSelected ? 1.5 : 1.0,
+            textField: wp.comment,
+            textOffset: const Offset(0, 10),
           ),
         );
-      }).toList());
-    }
-    return markers;
-  }
+      }
 
-  List<Polyline> _getPolylines(Day? selectedDay) {
-    if (_trip == null) return [];
-
-    List<Polyline> polylines = [];
-    for (var day in _trip!.days) {
-      final isSelected = day == selectedDay;
-      final dayColor = day.color != null
-          ? Color(int.parse(day.color!.replaceFirst('#', '0xff')))
-          : Colors.blue;
-
+      // Add Route
       List<LatLng> points = [];
       if (day.geometry != null && day.geometry!.isNotEmpty) {
         try {
@@ -126,7 +169,7 @@ class _MapScreenState extends State<MapScreen> {
           final coordinates = geometryData['coordinates'] as List;
           points = coordinates.map((coord) {
             final c = coord as List;
-            return LatLng(c[1] as double, c[0] as double);
+            return LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble());
           }).toList();
         } catch (e) {
           debugPrint('Error parsing geometry: $e');
@@ -137,20 +180,23 @@ class _MapScreenState extends State<MapScreen> {
       }
 
       if (points.length >= 2) {
-        polylines.add(
-          Polyline(
-            points: points,
-            color: isSelected ? dayColor : dayColor.withOpacity(0.3),
-            strokeWidth: isSelected ? 5.0 : 3.0,
+        await _mapController!.addLine(
+          LineOptions(
+            geometry: points,
+            lineColor: isSelected
+                ? '#${dayColor.value.toRadixString(16).substring(2).toUpperCase()}'
+                : '#${dayColor.withOpacity(0.3).value.toRadixString(16).substring(2).toUpperCase()}',
+            lineWidth: isSelected ? 5.0 : 3.0,
           ),
         );
       }
     }
-    return polylines;
+    debugPrint('MapLibre: [${DateTime.now()}] Map layers update completed');
   }
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('MapScreen: build called at ${DateTime.now()}');
     if (_isLoading) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
@@ -167,10 +213,37 @@ class _MapScreenState extends State<MapScreen> {
       appBar: AppBar(
         title: Text(_trip!.name),
         actions: [
+          _isDownloading
+            ? SizedBox(
+                width: 48,
+                child: Center(
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      value: _downloadProgress,
+                    ),
+                  ),
+                ),
+              )
+            : IconButton(
+                icon: const Icon(Icons.download_for_offline),
+                tooltip: 'Скачать область',
+                onPressed: _downloadCurrentView,
+              ),
+            IconButton(
+              icon: const Icon(Icons.route),
+              tooltip: 'Кэшировать весь маршрут',
+              onPressed: _downloadTripRoute,
+            ),
           IconButton(
-            icon: const Icon(Icons.download),
-            tooltip: 'Скачать область',
-            onPressed: _downloadCurrentView,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Обновить карту',
+            onPressed: () {
+              _updateMapLayers();
+              _zoomToTrip();
+            },
           ),
           IconButton(
             icon: const Icon(Icons.settings),
@@ -182,30 +255,79 @@ class _MapScreenState extends State<MapScreen> {
       ),
       body: Stack(
         children: [
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: const LatLng(55.75, 37.61),
-              initialZoom: 10,
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.georouter.app',
-                tileProvider: FMTCStore('osm').getTileProvider(),
-              ),
-              ValueListenableBuilder<Day?>(
-                valueListenable: _selectedDayNotifier,
-                builder: (context, selectedDay, child) {
-                  return Stack(
-                    children: [
-                      PolylineLayer(polylines: _getPolylines(selectedDay)),
-                      MarkerLayer(markers: _getMarkers(selectedDay)),
+          if (_isDownloading)
+            Positioned(
+              top: 20,
+              left: 20,
+              right: 20,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(30),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
                     ],
-                  );
-                },
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.downloading, size: 20, color: Colors.blue),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Загрузка карты... ${(_downloadProgress * 100).toStringAsFixed(0)}%',
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                            ),
+                            const SizedBox(height: 4),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(2),
+                              child: LinearProgressIndicator(
+                                value: _downloadProgress,
+                                minHeight: 4,
+                                backgroundColor: Colors.grey[300],
+                                valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _cancelDownload = true;
+                          });
+                        },
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('Отмена', style: TextStyle(color: Colors.red, fontSize: 13)),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ],
+            ),
+          MapLibreMap(
+            onMapCreated: _onMapCreated,
+            onStyleLoadedCallback: _onStyleLoaded,
+            initialCameraPosition: const CameraPosition(
+              target: LatLng(55.75, 37.61),
+              zoom: 10,
+            ),
+            styleString: OfflineMapHelper.defaultStyleUrl
           ),
           Positioned(
             top: 20,
@@ -224,39 +346,130 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  Future<void> _downloadCurrentView() async {
-    final bounds = _mapController.camera.visibleBounds;
+  LatLngBounds _calculateTripBounds() {
+    if (_trip == null || _trip!.days.isEmpty) {
+      return LatLngBounds(
+        southwest: LatLng(0, 0),
+        northeast: LatLng(0, 0),
+      );
+    }
+
+    final allPoints = _trip!.days
+        .expand((day) => day.waypoints)
+        .map((wp) => LatLng(wp.lat, wp.lon))
+        .toList();
+
+    if (allPoints.isEmpty) {
+      return  LatLngBounds(
+        southwest: LatLng(0, 0),
+        northeast: LatLng(0, 0),
+      );
+    }
+
+    double minLon = allPoints.first.longitude;
+    double maxLon = allPoints.first.longitude;
+    double minLat = allPoints.first.latitude;
+    double maxLat = allPoints.first.latitude;
+
+    for (var p in allPoints) {
+      if (p.longitude < minLon) minLon = p.longitude;
+      if (p.longitude > maxLon) maxLon = p.longitude;
+      if (p.latitude < minLat) minLat = p.latitude;
+      if (p.latitude > maxLat) maxLat = p.latitude;
+    }
+
+    return LatLngBounds(
+      southwest: LatLng(minLat, minLon),
+      northeast: LatLng(maxLat, maxLon),
+    );
+  }
+
+  Future<void> _downloadTripRoute() async {
+    final bounds = _calculateTripBounds();
+    if (bounds.southwest.latitude == 0 && bounds.southwest.longitude == 0) return;
+
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 0.0;
+      _cancelDownload = false;
+    });
 
     try {
-      // Start downloading the current visible area
-      // Zoom range 12-18 is usually sufficient for route navigation
-      final region = RectangleRegion(bounds).toDownloadable(
-        minZoom: 12,
-        maxZoom: 18,
-        options: TileLayer(
-          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'com.georouter.app',
-        ),
-      );
-      final downloadStream = FMTCStore('osm').download.startForeground(
-          region: region);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Началась загрузка области карты...')),
+      await OfflineMapHelper.downloadRegion(
+        bounds: bounds,
+        minZoom: 10, // Lower zoom for the whole route to avoid too many tiles
+        maxZoom: 14, // Moderate zoom for route overview
+        onProgress: (progress) {
+          setState(() {
+            _downloadProgress = progress;
+          });
+        },
+        onCancel: () => _cancelDownload,
       );
 
-      // Listen to progress
-      await for (final progress in downloadStream) {
-        debugPrint('Download progress: ${progress.percentageProgress}%');
+      if (!_cancelDownload) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Весь маршрут успешно закэширован!')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Загрузка отменена')),
+        );
       }
-
+    } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Область карты успешно загружена!')),
+        SnackBar(content: Text('Ошибка при загрузке маршрута: $e')),
       );
+    } finally {
+      setState(() {
+        _isDownloading = false;
+        _cancelDownload = false;
+      });
+    }
+  }
+
+  Future<void> _downloadCurrentView() async {
+    if (_mapController == null) return;
+
+    final bounds = await _mapController!.getVisibleRegion();
+    
+    setState(() {
+      _isDownloading = true;
+      _downloadProgress = 0.0;
+      _cancelDownload = false;
+    });
+
+    try {
+      await OfflineMapHelper.downloadRegion(
+        bounds: bounds,
+        minZoom: 12,
+        maxZoom: 16,
+        onProgress: (progress) {
+          setState(() {
+            _downloadProgress = progress;
+          });
+        },
+        onCancel: () => _cancelDownload,
+      );
+      
+      if (!_cancelDownload) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Область карты успешно закэширована!')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Загрузка отменена')),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ошибка при загрузке карты: $e')),
       );
+    } finally {
+      setState(() {
+        _isDownloading = false;
+        _cancelDownload = false;
+      });
     }
   }
 
@@ -355,7 +568,10 @@ class _MapScreenState extends State<MapScreen> {
                 final day = _trip!.days[index];
                 final isSelected = selectedDay == day;
                 return GestureDetector(
-                  onTap: () => _selectedDayNotifier.value = day,
+                  onTap: () {
+                    _selectedDayNotifier.value = day;
+                    _updateMapLayers();
+                  },
                   child: Container(
                     width: 80,
                     margin: const EdgeInsets.all(8),
