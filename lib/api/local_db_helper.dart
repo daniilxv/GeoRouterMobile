@@ -35,6 +35,16 @@ class LocalDatabaseHelper {
         data TEXT NOT NULL
       )
     ''');
+
+    await db.execute('''
+      CREATE TABLE sync_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT NOT NULL,
+        trip_id INTEGER,
+        data TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    ''');
   }
 
   Future<void> saveTrip(Trip trip) async {
@@ -110,8 +120,48 @@ class LocalDatabaseHelper {
     );
   }
 
+  Future<void> updateTripId(int oldId, Trip newTrip) async {
+    final db = await instance.database;
+    await db.transaction((txn) async {
+      await txn.delete('trips', where: 'id = ?', whereArgs: [oldId]);
+      await txn.insert(
+        'trips',
+        {
+          'id': newTrip.id,
+          'name': newTrip.name,
+          'user_id': newTrip.userId,
+          'data': jsonEncode(newTrip.toJson()),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+  }
+
   Future<void> clearAllTrips() async {
     final db = await instance.database;
     await db.delete('trips');
+  }
+
+  Future<void> addToSyncQueue(String action, {int? tripId, String? data}) async {
+    final db = await instance.database;
+    await db.insert('sync_queue', {
+      'action': action,
+      'trip_id': tripId,
+      'data': data,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getSyncQueue() async {
+    final db = await instance.database;
+    return await db.query('sync_queue', orderBy: 'timestamp ASC');
+  }
+
+  Future<void> removeFromSyncQueue(int id) async {
+    final db = await instance.database;
+    await db.delete(
+      'sync_queue',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 }
